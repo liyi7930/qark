@@ -37,6 +37,15 @@ progressbar2 = ProgressBar(widgets=['Procyon ', Percentage(), Bar()], maxval=100
 progresswriter3 = common.Writer((0, common.term.height-6))
 progressbar3 = ProgressBar(widgets=['CFR ', Percentage(), Bar()], maxval=100, fd=progresswriter3)
 
+#liyi
+def getDexList(path):
+	items = os.listdir(path)
+	dexList=[]
+	for name in items:
+		if name.endswith(".dex"):
+			dexList.append(path+"/"+name)
+	return dexList
+
 def unpack():
 	"""
 	APK to DEX
@@ -54,7 +63,8 @@ def unpack():
 				os.makedirs(dirname + "/")
 			zf.extractall(dirname + "/", zf.namelist(), )
 			logger.info('Extracted APK to %s', dirname + '/')
-			common.pathToDEX = dirname + "/classes.dex"
+			common.dexList = getDexList(dirname)	#liyi
+			#common.pathToDEX = dirname + "/classes.dex"
 			common.pathToUnpackedAPK = dirname + '/'
 			return True
 	except Exception as e:
@@ -114,6 +124,123 @@ def grep_1(path, regex):
 						res.append(os.path.join(root, fname))
 					f.close()
 	return res
+
+#liyi
+def mergedJarFile(path, jarList):
+	if 1 == len(jarList):
+		return jarList[0]
+	mfile = path + "/classes_dex2jar_merge.jar"
+	mzf = zipfile.ZipFile(mfile,'w',zipfile.ZIP_DEFLATED)
+	for jar in jarList:
+		zf = zipfile.ZipFile(jar, 'r')
+		for name in zf.namelist():
+			mzf.writestr(name, zf.open(name).read())
+	mzf.close()
+	return mfile
+
+#liyi
+def multiDecompile(pathList):
+	"""
+	Converts DEX to JAR(containing class files) and then class files to near original java code using 3 different decompilers and selecting the best available decompiled code
+	"""
+	if "" == common.pathToUnpackedAPK:
+		print "common.pathToUnpackedAPK is empty."
+		exit
+	jarList = []
+	for dexPath in pathList:
+		common.pathToDEX = dexPath
+		pathToDex2jar = common.rootDir + "/lib/dex2jar/dex2jar.sh"
+		sp = subprocess.Popen([pathToDex2jar, common.pathToDEX], shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+		output, error = sp.communicate()
+		common.pathToJar = common.pathToDEX.rsplit(".",1)[0] + "_dex2jar.jar"
+		jarList.append(common.pathToJar)
+
+	#dirname, extension = common.pathToJar.rsplit(".",1)
+	#zf = zipfile.ZipFile(common.pathToJar)
+	print jarList
+	pathToMergedJar = mergedJarFile(common.pathToUnpackedAPK, jarList)
+	dirname = pathToMergedJar.rsplit(".",1)[0]
+	zf = zipfile.ZipFile(pathToMergedJar)
+
+	#Total number of class files that need to be decompiled
+	total_files = len(zf.namelist())
+	report.write("totalfiles", total_files)
+	common.count = len([s for s in zf.namelist() if ((".class" in s) and ("$" not in s))])
+
+	pub.subscribe(decompiler_update, 'decompile')
+
+	thread0 = Process(name='clear', target=clear, args = ())
+	thread1 = Process(name='jdcore', target=jdcore, args = (zf.filename,dirname))
+	thread2 = Process(name='procyon', target=cfr, args = (zf.filename,dirname))
+	thread3 = Process(name='cfr', target=procyon, args = (zf.filename,dirname))
+
+	thread0.start()
+	thread0.join()
+
+	progressbar1.start()
+	progressbar2.start()
+	progressbar3.start()
+
+
+	thread1.start()
+	thread2.start()
+	thread3.start()
+	thread1.join(0)
+	thread2.join(0)
+	thread3.join(0)
+
+	with common.term.cbreak():
+		val = None
+		while val not in (u'c', u'C'):
+			with common.term.location(0,common.term.height-3):
+				print "Decompilation may hang/take too long (usually happens when the source is obfuscated)."
+				print "At any time," + common.term.bold_underline_red_on_white('Press C to continue') + " and QARK will attempt to run SCA on whatever was decompiled."
+				val = common.term.inkey(timeout=1)
+				if not (thread1.is_alive() or thread2.is_alive() or thread3.is_alive()):
+					break
+
+	if thread1.is_alive():
+		thread1.terminate()
+	if thread2.is_alive():
+		thread2.terminate()
+	if thread3.is_alive():
+		thread3.terminate()
+
+	#Go back to the bottom of the screen
+	with common.term.location(0,common.term.height):
+		print ""
+
+	g1 = grep_1(dirname, "// Byte code:")
+	g2 = grep_1(dirname+"1", "// This method has failed to decompile.")
+	g3 = grep_1(dirname+"2", "// This method could not be decompiled.")
+
+	#print list(set(g1) - set(g2))
+	logger.info("Trying to improve accuracy of the decompiled files")
+	restored = 0
+	try:
+		for filename in g1:
+			relative_filename = str(filename).split(dirname)[1]
+			if any(relative_filename in s for s in g2):
+				if any(relative_filename in s for s in g3):
+					logger.debug("Failed to reconstruct: " + relative_filename)
+				else:
+					shutil.copy(dirname+"2"+relative_filename, filename)
+					restored = restored +1
+			else:
+				shutil.copy(dirname+"1"+relative_filename, filename)
+				restored = restored +1
+	except Exception as e:
+		print e.message
+	report.write("restorestats","Restored " + str(restored) + " file(s) out of " + str(len(g1)) + " corrupt file(s)")
+	logger.info("Restored " + str(restored) + " file(s) out of " + str(len(g1)) + " corrupt file(s)")
+	logger.debug("Deleting redundant decompiled files")
+	try:
+		shutil.rmtree(dirname+"1")
+		logger.debug("Deleted " + dirname+"1")
+		shutil.rmtree(dirname+"2")
+		logger.debug("Deleted " + dirname+"2")
+	except Exception as e:
+		logger.debug("Unable to delete redundant decompiled files (no impact on scan results): " + str(e))
 
 def decompile(path):
 	"""

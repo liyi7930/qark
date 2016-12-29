@@ -585,7 +585,7 @@ def main():
                 unpackAPK.unpack()
                 break
             except Exception as e:
-				print "Exception"
+                print "Exception"
                 continue
 
         try:
@@ -720,7 +720,11 @@ def main():
         except IOError:
             common.logger.error("Oops! all hope is lost \n %s", IOError.message)
     else:
-        unpackAPK.decompile(common.pathToDEX)
+        #liyi change
+        #for dex in common.dexList:
+        #    unpackAPK.decompile(dex)
+        unpackAPK.multiDecompile(common.dexList)
+        #unpackAPK.decompile(common.pathToDEX)
         if common.pathToUnpackedAPK != "":
             common.logger.info('Decompiled code found at:%s', common.pathToUnpackedAPK)
             common.sourceDirectory = common.pathToUnpackedAPK

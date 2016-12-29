@@ -42,6 +42,7 @@ args = []
 xmldoc = minidom.parseString('<myxml>initialize</myxml>')
 targetSdkVersion = 1
 sdk = xmldoc.getElementsByTagName("uses-sdk")
+dexList = []
 pathToDEX = ""
 pathToJar = ""
 pathToUnpackedAPK = ""
