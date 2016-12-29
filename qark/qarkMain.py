@@ -585,6 +585,7 @@ def main():
                 unpackAPK.unpack()
                 break
             except Exception as e:
+				print "Exception"
                 continue
 
         try:
